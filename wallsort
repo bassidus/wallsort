@@ -1,0 +1,87 @@
+#!/bin/bash
+
+if [[ $# -ne 2 ]]; then
+    echo "Usage: $(basename "$0") <source-dir> <target-dir>"
+    echo
+    echo "  source-dir  Directory containing unsorted wallpapers"
+    echo "  target-dir  Directory where sorted subfolders will be created"
+    exit 1
+fi
+
+SRC_DIR="$1"
+OUT_DIR="$2"
+
+# Resolve source directory
+cd "$SRC_DIR" || { echo "Source directory not found: $SRC_DIR"; exit 1; }
+SRC_DIR="$(pwd)"
+
+# Resolve output directory (create it if needed)
+mkdir -p "$OUT_DIR" || { echo "Cannot create output directory: $OUT_DIR"; exit 1; }
+OUT_DIR="$(cd "$OUT_DIR" && pwd)"
+
+# Enable case-insensitive matching and extended patterns for Bash
+shopt -s nocaseglob extglob
+
+# Collect all matching files upfront for progress tracking
+# @() = exactly one of these extensions (fixes the *() zero-or-more bug)
+files=( *.@(jpg|jpeg|png|webp|avif|jxl|tiff|tif|bmp) )
+
+# Discard the literal glob string when no files match
+[[ ${#files[@]} -eq 1 && ! -e "${files[0]}" ]] && files=()
+
+total=${#files[@]}
+
+if [[ $total -eq 0 ]]; then
+    echo "No image files found in $SRC_DIR."
+    exit 0
+fi
+
+count=0
+skipped=0
+
+for file in "${files[@]}"; do
+    (( count++ ))
+    pct=$(( count * 100 / total ))
+
+    # Overwrite the line in interactive terminals; fall back to plain output
+    if [[ -t 1 ]]; then
+        printf "\r[%3d%%] (%d/%d) %s\033[K" "$pct" "$count" "$total" "$file"
+    else
+        echo "[$pct%] ($count/$total) $file"
+    fi
+
+    # Get dimensions
+    dimensions=$(identify -format "%w %h" "$file" 2>/dev/null)
+    [[ -z "$dimensions" ]] && continue
+    read -r width height <<< "$dimensions"
+
+    # Determine main category (aspect ratio) via awk — no bc subshell
+    dir=$(awk -v w="$width" -v h="$height" 'BEGIN {
+        r = w / h
+        if (r > 2.3)      print "Ultrawide"
+        else if (r > 1.3) print "Widescreen"
+        else               print "Other"
+    }')
+
+    # Determine subcategory (resolution)
+    if   [ "$width" -ge 5120 ]; then subdir="Ultra_High_Res"
+    elif [ "$width" -ge 3840 ]; then subdir="4K"
+    elif [ "$width" -ge 2560 ]; then subdir="QHD"
+    elif [ "$width" -ge 1920 ]; then subdir="FHD"
+    elif [ "$width" -ge 1280 ]; then subdir="HD"
+    else                              subdir="Small_Files"
+    fi
+
+    # Execute move — refuse to silently overwrite an existing file
+    target_path="$OUT_DIR/$dir/$subdir"
+    mkdir -p "$target_path"
+    if ! mv --no-clobber "$file" "$target_path/"; then
+        (( skipped++ ))
+        printf "\n  Skipped (conflict): %s -> %s\n" "$file" "$target_path/"
+    fi
+done
+
+echo   # newline after the progress line
+echo "Sorting complete! ($total files processed, $skipped skipped due to name conflicts)"
+echo "  Source: $SRC_DIR"
+echo "  Output: $OUT_DIR"
