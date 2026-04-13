@@ -23,11 +23,15 @@ fi
 SRC_DIR="$1"
 OUT_DIR="$2"
 
+# Capture CWD before cd-ing anywhere
+INVOKE_DIR="$(pwd)"
+
 # Resolve source directory
 cd "$SRC_DIR" || { echo "Source directory not found: $SRC_DIR"; exit 1; }
 SRC_DIR="$(pwd)"
 
-# Resolve output directory (create it if needed)
+# Resolve output directory relative to where the user invoked the script
+[[ "$OUT_DIR" != /* ]] && OUT_DIR="$INVOKE_DIR/$OUT_DIR"
 mkdir -p "$OUT_DIR" || { echo "Cannot create output directory: $OUT_DIR"; exit 1; }
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
