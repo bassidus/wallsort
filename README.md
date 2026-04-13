@@ -40,11 +40,12 @@ brew install imagemagick
 ## Usage
 
 ```bash
-./wallsort <source-dir> <target-dir>
+./wallsort [-R] <source-dir> <target-dir>
 ```
 
 | Argument | Description |
 |---|---|
+| `-R` | Recursively scan `source-dir` for images |
 | `source-dir` | Directory containing unsorted images |
 | `target-dir` | Directory where sorted subfolders will be created (created if absent) |
 
@@ -56,10 +57,22 @@ Supported formats: `jpg`, `jpeg`, `png`, `webp`, `avif`, `jxl`, `tiff`, `bmp`
 ./wallsort ~/Downloads/walls ~/Pictures/wallpapers
 ```
 
+To recursively scan subdirectories:
+
+```bash
+./wallsort -R ~/Downloads/walls ~/Pictures/wallpapers
+```
+
 Progress is shown inline while running:
 
 ```
 [ 73%] (463/633) my_wallpaper.jpg
+```
+
+In recursive mode the relative path from the source directory is shown:
+
+```
+[ 73%] (463/633) subdir/my_wallpaper.jpg
 ```
 
 Files that would overwrite an existing file at the destination are skipped and counted in the final summary.
@@ -75,3 +88,4 @@ Sorting complete! (633 files processed, 2 skipped due to name conflicts)
 - The source directory is not modified structurally — only the matched image files are moved out of it.
 - Skipped files (name conflicts) are left in the source directory untouched.
 - Running the script a second time on a partially sorted source is safe.
+- In recursive mode, subdirectory structure of the source is not preserved — all images are sorted flat into the target hierarchy.

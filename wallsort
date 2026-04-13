@@ -1,8 +1,20 @@
 #!/bin/bash
 
+RECURSIVE=false
+
+# Parse optional -R flag
+while getopts ":R" opt; do
+    case $opt in
+        R) RECURSIVE=true ;;
+        *) ;;
+    esac
+done
+shift $(( OPTIND - 1 ))
+
 if [[ $# -ne 2 ]]; then
-    echo "Usage: $(basename "$0") <source-dir> <target-dir>"
+    echo "Usage: $(basename "$0") [-R] <source-dir> <target-dir>"
     echo
+    echo "  -R          Recursively scan source-dir for images"
     echo "  source-dir  Directory containing unsorted wallpapers"
     echo "  target-dir  Directory where sorted subfolders will be created"
     exit 1
@@ -19,20 +31,21 @@ SRC_DIR="$(pwd)"
 mkdir -p "$OUT_DIR" || { echo "Cannot create output directory: $OUT_DIR"; exit 1; }
 OUT_DIR="$(cd "$OUT_DIR" && pwd)"
 
-# Enable case-insensitive matching and extended patterns for Bash
-shopt -s nocaseglob extglob
+# Collect all matching image files
+image_exts=( -iname "*.jpg" -o -iname "*.jpeg" -o -iname "*.png" -o -iname "*.webp" \
+             -o -iname "*.avif" -o -iname "*.jxl" -o -iname "*.tiff" -o -iname "*.tif" \
+             -o -iname "*.bmp" )
 
-# Collect all matching files upfront for progress tracking
-# @() = exactly one of these extensions (fixes the *() zero-or-more bug)
-files=( *.@(jpg|jpeg|png|webp|avif|jxl|tiff|tif|bmp) )
-
-# Discard the literal glob string when no files match
-[[ ${#files[@]} -eq 1 && ! -e "${files[0]}" ]] && files=()
+if $RECURSIVE; then
+    mapfile -d '' files < <(find "$SRC_DIR" -type f \( "${image_exts[@]}" \) -print0 | sort -z)
+else
+    mapfile -d '' files < <(find "$SRC_DIR" -maxdepth 1 -type f \( "${image_exts[@]}" \) -print0 | sort -z)
+fi
 
 total=${#files[@]}
 
 if [[ $total -eq 0 ]]; then
-    echo "No image files found in $SRC_DIR."
+    echo "No image files found in $SRC_DIR${RECURSIVE:+ (recursive)}."
     exit 0
 fi
 
@@ -42,12 +55,13 @@ skipped=0
 for file in "${files[@]}"; do
     (( count++ ))
     pct=$(( count * 100 / total ))
+    display="${file#"$SRC_DIR/"}"
 
     # Overwrite the line in interactive terminals; fall back to plain output
     if [[ -t 1 ]]; then
-        printf "\r[%3d%%] (%d/%d) %s\033[K" "$pct" "$count" "$total" "$file"
+        printf "\r[%3d%%] (%d/%d) %s\033[K" "$pct" "$count" "$total" "$display"
     else
-        echo "[$pct%] ($count/$total) $file"
+        echo "[$pct%] ($count/$total) $display"
     fi
 
     # Get dimensions
@@ -77,7 +91,7 @@ for file in "${files[@]}"; do
     mkdir -p "$target_path"
     if ! mv --no-clobber "$file" "$target_path/"; then
         (( skipped++ ))
-        printf "\n  Skipped (conflict): %s -> %s\n" "$file" "$target_path/"
+        printf "\n  Skipped (conflict): %s -> %s\n" "$display" "$target_path/"
     fi
 done
 
