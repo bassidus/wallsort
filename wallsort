@@ -1,19 +1,25 @@
 #!/bin/bash
 
 RECURSIVE=false
+MOVE_DUPES=false
+PRUNE_EMPTY=false
 
-while getopts ':R' opt; do
+while getopts ':Rde' opt; do
     case $opt in
         R) RECURSIVE=true ;;
+        d) MOVE_DUPES=true ;;
+        e) PRUNE_EMPTY=true ;;
         ?) echo "Unknown option: -$OPTARG"; exit 1 ;;
     esac
 done
 shift $(( OPTIND - 1 ))
 
 if [[ $# -ne 2 ]]; then
-    echo "Usage: $(basename "$0") [-R] <source-dir> <target-dir>"
+    echo "Usage: $(basename "$0") [-Rde] <source-dir> <target-dir>"
     echo
     echo "  -R          Recursively scan source-dir for images"
+    echo "  -d          Move duplicates to target-dir/Duplicates instead of leaving them"
+    echo "  -e          Remove empty directories left in source-dir afterwards"
     echo "  source-dir  Directory containing unsorted wallpapers"
     echo "  target-dir  Directory where sorted subfolders will be created"
     exit 1
@@ -47,12 +53,23 @@ fi
 
 total=${#files[@]}
 
+prune_empty_dirs() {
+    $PRUNE_EMPTY || return 0
+    local pruned=0 dir
+    while IFS= read -r -d '' dir; do
+        rmdir "$dir" 2>/dev/null && (( pruned++ ))
+    done < <(find "$SRC_DIR" -mindepth 1 -name '.*' -prune -o -type d -print0 | sort -zr)
+    (( pruned > 0 )) && echo "Removed $pruned empty director$( (( pruned == 1 )) && echo y || echo ies) in $SRC_DIR"
+    return 0
+}
+
 if (( total == 0 )); then
-    echo "No image files found in $SRC_DIR${RECURSIVE:+ (recursive)}."
+    echo "No image files found in $SRC_DIR$($RECURSIVE && echo ' (recursive)')."
+    prune_empty_dirs
     exit 0
 fi
 
-count=0 skipped=0 in_place=0
+count=0 skipped=0 in_place=0 failed=0 dupes=0
 
 for file in "${files[@]}"; do
     (( count++ ))
@@ -65,7 +82,11 @@ for file in "${files[@]}"; do
         echo "[$(( count * 100 / total ))%] ($count/$total) $display"
     fi
 
-    read -r width height < <(identify -format '%w %h\n' "$file" 2>/dev/null) || continue
+    if ! read -r width height < <(identify -ping -format '%w %h\n' "$file[0]" 2>/dev/null); then
+        (( failed++ ))
+        printf '\n  failed to identify: %s\n' "$display"
+        continue
+    fi
 
     aspect=$(awk -v w="$width" -v h="$height" 'BEGIN {
         r = w / h
@@ -89,13 +110,38 @@ for file in "${files[@]}"; do
     fi
 
     mkdir -p "$dest"
-    if ! mv --no-clobber "$file" "$dest/"; then
-        (( skipped++ ))
-        printf '\n  skipped (conflict): %s -> %s/\n' "$display" "$dest"
+    if [[ -e $dest/${file##*/} ]]; then
+        if cmp -s "$file" "$dest/${file##*/}"; then
+            if $MOVE_DUPES; then
+                dup_dir=$OUT_DIR/Duplicates
+                mkdir -p "$dup_dir"
+                base=${file##*/}
+                target=$dup_dir/$base
+                n=1
+                while [[ -e $target ]]; do
+                    target=$dup_dir/${base%.*}_$n.${base##*.}
+                    (( n++ ))
+                done
+                mv "$file" "$target"
+                (( dupes++ ))
+                printf '\n  duplicate: %s -> %s\n' "$display" "$target"
+            else
+                (( skipped++ ))
+                printf '\n  skipped (duplicate): %s\n' "$display"
+            fi
+        else
+            (( skipped++ ))
+            printf '\n  skipped (name conflict): %s -> %s/\n' "$display" "$dest"
+        fi
+        continue
     fi
+    mv --no-clobber "$file" "$dest/"
 done
 
 echo
-echo "Done. $total scanned, $in_place already sorted, $skipped conflicts."
+
+prune_empty_dirs
+
+echo "Done. $total scanned, $in_place already sorted, $skipped conflicts, $dupes duplicates moved, $failed failed to identify."
 echo "  src: $SRC_DIR"
 echo "  out: $OUT_DIR"
